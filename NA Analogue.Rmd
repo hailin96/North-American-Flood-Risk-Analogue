@@ -1,0 +1,2771 @@
+---
+title: "North American Flood Risk Analogue"
+author: "Hailin Wang"
+date: "2025-07-17"
+output: html_document
+---
+
+##Setup
+
+```{r, setup, include = FALSE}
+
+#Set working directory
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE) #for knitting only, not for rmd chunks
+knitr::opts_knit$set(root.dir = "~/Documents/Documents/SFU/NSERC/USRA 2/Data")
+
+#Load all necessary packages for Step 1.
+library(rvest)
+library(dplyr)
+library(readr)
+library(stringr)
+library(purrr)
+library(lubridate)
+library(terra)
+library(utils)
+library(curl)
+library(tidyr)
+
+```
+
+##Plug in Your Location of Interest!
+
+Indicate the latitude and longitude boundaries of your city/location below.
+```{r}
+
+west <- -123.2 #is it -180 to 180 or 0 to 360? Pay attention!
+east <- -123.1 #is it -180 to 180 or 0 to 360?
+south <- 49.2
+north <- 49.3
+
+location_area <- ext(west, east, south, north)
+
+location_coords <- c(lng = -123.116, lat = 49.25)
+
+#Which month of the year? Please write the month in terms of YYYY-MM-DD
+
+target_date <- as.Date("2025-06-01")
+future_date <- as.Date("2050-06-01")
+
+```
+
+
+The following methodology is referenced from the final report.
+
+##1. Building Present Rasters
+    a. Downloading historical temperature + precipitation data from Canada for the years 2010-2025.
+    
+    Alberta Temperature and Precipitation
+```{r, download AB}
+
+#Alberta Temperature & Precipitation
+
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/alberta_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/AB/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/alberta_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_ab_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/alberta_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_ab_list <- map(csv_ab_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_ab_all <- bind_rows(csv_ab_list)
+
+head(climate_ab_all)
+
+
+```
+
+
+
+    British Columbia Temperature and Precipitation
+```{r, download BC}
+
+#British Columbia Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/bc_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/BC/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/bc_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_bc_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/bc_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_bc_list <- map(csv_bc_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_bc_all <- bind_rows(csv_bc_list)
+
+head(climate_bc_all)
+
+
+```
+
+
+
+    Manitoba Temperature and Precipitation
+```{r, download MB}
+
+#Manitoba Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/manitoba_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/MB/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/manitoba_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_mb_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/manitoba_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_mb_list <- map(csv_mb_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_mb_all <- bind_rows(csv_mb_list)
+
+head(climate_mb_all)
+
+```
+
+    New Brunswick Temperature and Precipitation
+    
+```{r, download NB}
+
+#New Brunswick Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/nb_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/NB/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/nb_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_nb_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/nb_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_nb_list <- map(csv_nb_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_nb_all <- bind_rows(csv_nb_list)
+
+head(climate_nb_all)
+
+```
+
+    Newfoundland and Labrador
+```{r, download NL}
+
+#Newfoundland and Labrador Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/nl_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/NL/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/nl_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_nl_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/nl_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_nl_list <- map(csv_nl_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_nl_all <- bind_rows(csv_nl_list)
+
+head(climate_nl_all)
+
+
+```
+
+
+    Nova Scotia Temperature and Precipitation
+    
+```{r, download NS}
+
+#Nova Scotia Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/ns_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/NS/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/ns_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_ns_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/ns_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_ns_list <- map(csv_ns_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_ns_all <- bind_rows(csv_ns_list)
+
+head(climate_ns_all)
+
+
+```
+
+    Northwest Territories Temperature and Precipitation
+    
+```{r, download NT}
+
+#Northwest Territories Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/nt_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/NT/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/nt_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_nt_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/nt_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_nt_list <- map(csv_nt_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_nt_all <- bind_rows(csv_nt_list)
+
+head(climate_nt_all)
+
+
+```
+
+    Nunavut Temperature and Precipitation
+```{r, download NU}
+
+#Nunavut Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/nu_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/NU/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/nu_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_nu_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/nu_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_nu_list <- map(csv_nu_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_nu_all <- bind_rows(csv_nu_list)
+
+head(climate_nu_all)
+
+
+```
+
+
+    Ontario Temperature and Precipitation
+```{r, download ON}
+
+#Ontario Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/on_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/ON/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/on_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_on_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/on_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_on_list <- map(csv_on_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_on_all <- bind_rows(csv_on_list)
+
+head(climate_on_all)
+
+
+```
+
+
+    Prince Edward Island Temperature and Precipitation
+```{r, download PE}
+
+#Prince Edward Island Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/pe_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/PE/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/pe_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_pe_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/pe_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_pe_list <- map(csv_pe_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_pe_all <- bind_rows(csv_pe_list)
+
+head(climate_pe_all)
+
+
+```
+
+
+    Quebec Temperature and Precipitation
+```{r, download QC}
+
+#Quebec Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/quebec_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/QC/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/quebec_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_qc_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/quebec_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_qc_list <- map(csv_qc_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_qc_all <- bind_rows(csv_qc_list)
+
+head(climate_qc_all)
+
+
+```
+
+
+    Saskatchewan Temperature and Precipitation
+```{r, download SK}
+
+#Saskatchewan Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/sk_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/SK/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/sk_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_sk_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/sk_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_sk_list <- map(csv_sk_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_sk_all <- bind_rows(csv_sk_list)
+
+head(climate_sk_all)
+
+
+
+```
+
+
+    Yukon Temperature and Precipitation
+```{r, download YT}
+
+#Yukon Temperature & Precipitation
+
+#create a new directory for every new csv folder.
+dir.create("~/Documents/SFU/NSERC/USRA 2/Data/yukon_station_csvs", recursive = TRUE, showWarnings = FALSE)
+
+url <- "https://dd.weather.gc.ca/climate/observations/monthly/csv/YT/"
+page <- read_html(url)
+
+file_links <- page |>
+  html_elements("a") |>
+  html_attr("href") |>
+  str_subset("\\.csv$")
+
+csv_urls <- paste0(url, file_links)
+
+#extract year from file name (e.g., 2015 from climate_monthly_ON_6010400_2015_P1M.csv)
+years <- str_extract(file_links, "_(\\d{4})_") |> str_remove_all("_") |> as.integer()
+
+#keep only files from 2010–2025
+file_links_filtered <- file_links[years >= 2010 & years <= 2025]
+
+csv_urls <- paste0(url, file_links_filtered)
+
+message("Total files for 2010–2025: ", length(csv_urls))
+
+#download all the urls between years 2010 to 2025
+for (i in seq_along(csv_urls)) {
+  url <- csv_urls[i]
+  file_name <- basename(url)
+  dest_path <- file.path("~/Documents/SFU/NSERC/USRA 2/Data/yukon_station_csvs", file_name)
+  
+  message("Downloading: ", file_name)
+  download.file(url, destfile = dest_path, mode = "wb")
+}
+
+csv_yt_files <- list.files(
+  "~/Documents/SFU/NSERC/USRA 2/Data/yukon_station_csvs", pattern = "\\.csv$", full.names = TRUE)
+
+#loops over each csv in the file_list
+#applies the function read_csv() to each csv
+#every column of csv must be read as a character by default
+#returns a list of events
+#make sure you're not using read.csv() but read_csv()
+csv_yt_list <- map(csv_yt_files, ~ read_csv(.x, show_col_types = FALSE, col_types = cols(.default = "c")))
+
+climate_yt_all <- bind_rows(csv_yt_list)
+
+head(climate_yt_all)
+
+
+```
+
+  b. Downloading U.S. Temperature and Precipitation Historical Data from 2010-2025.
+  
+  Attempt 1 failed due to using raw data. The significant number of NAs could not result in realistic IDW interpolation. 
+  The issue was solved once we found out that the NAs came from a wrong way of reading the fwf .dat file, and R had instead read embedded characters to be NAs as the it had expected the month columns to have numeric values. We discovered the right sequence to reading the characters and classified them in terms of numerical value, quality control flags 1, 2, and 3. There are no more NAs in the second attempt at reading the fwf .dat file.
+  
+  One concern with this attempt is that U.S. observational data for Alaska stops updating after 2010.
+
+    NOAA Observational Temperature (Second Attempt)
+```{r}
+
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+
+#Using Quality Controlled Adjusted and Estimated .dat file instead (QFE)
+
+dir <- normalizePath("~/Documents/SFU/NSERC/USRA 2/Data/ghcn", mustWork = FALSE)
+dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+
+#now with the dat and inv files that I downloaded from the NCEI NOAA website
+#we know that dat is the actual temperature data
+#inv is the inventory of stations
+
+stations_all <- file.path(dir, "ghcnm.tavg.v4.0.1.20250725.qfe.inv")
+
+stations <- read.fwf(
+  stations_all,
+  widths = c(11, 9, 10, 7, 3, 30),
+  col.names = c("ID", "Latitude", "Longitude", "Elevation", "State", "Name"),
+  strip.white = TRUE
+)
+
+head(stations)
+
+#filter for American stations
+us_stations <- subset(stations, grepl("^US", ID) &
+                        Latitude >= 25 & Latitude <= 50 &
+                        Longitude >= -125 & Longitude <= -65)
+
+widths <- c(11, 4, 4, rep(c(5, 1, 1, 1), 12))
+  #11 for ID, 4 Year, 2 Month, 4 Statistic, then 5 char for numeric temp value, 1 char for DM flag, 1 char for QC flag, 1 char for DS flag
+
+col_names <- c("ID", "Year", "Statistic", 
+               "M1", "DM1", "QC1", "DS1", 
+               "M2", "DM2", "QC2", "DS2",
+               "M3", "DM3", "QC3", "DS3",
+               "M4", "DM4", "QC4", "DS4",
+               "M5", "DM5", "QC5", "DS5",
+               "M6", "DM6", "QC6", "DS6",
+               "M7", "DM7", "QC7", "DS7",
+               "M8", "DM8", "QC8", "DS8",
+               "M9", "DM9", "QC9", "DS9",
+               "M10", "DM10", "QC10", "DS10",
+               "M11", "DM11", "QC11", "DS11",
+               "M12", "DM12", "QC12", "DS12"
+               )
+
+temp_us <- readr::read_fwf(
+  file = file.path(dir, "ghcnm.tavg.v4.0.1.20250725.qfe.dat"),
+  col_positions = fwf_widths(widths, col_names = col_names),
+)
+
+#clean up the monthly values so that we only have the numeric portion, and discard the alphabets
+
+temp_us_long <- temp_us |>
+  tidyr::pivot_longer(cols = starts_with("M"),
+                      names_to = "Month",
+                      values_to = "Temp_raw",
+                      names_pattern = "M(\\d{1,2})") |>
+  mutate(Temp_C = as.numeric(Temp_raw) / 100)
+
+temp_us_clean <- temp_us_long |> 
+  dplyr::mutate(
+    Month = as.integer(Month), #month previously is a character
+    Temp_C = ifelse(Temp_raw %in% c("-9999", "-8888", "-7777"), NA, Temp_C) #make sure to clean up the extremely large neg numbers
+  ) |>
+  dplyr::select(ID, Year, Month, Temp_C)
+
+temp_us_clean$Temp_C <- as.numeric(temp_us_clean$Temp_C) #make sure that temp is converted to numeric as well!!
+temp_us_clean$Year <- as.numeric(temp_us_clean$Year) #year too!!
+
+temp_us_filtered <- temp_us_clean[temp_us_clean$ID %in% us_stations$ID, ]
+
+temp_us_id <- temp_us_filtered |> 
+              left_join(us_stations, by = "ID") 
+
+temp_us_filteredyrs <- temp_us_id[temp_us_id$Year >= 2010 & temp_us_id$Year <= 2025, ]
+
+
+```
+
+
+    NOAA Observational Precipitation
+```{r, download US Precipitation}
+
+pdir <- path.expand("~/Documents/SFU/NSERC/USRA 2/Data/ghcn/Precipitation")
+dir.create(pdir, recursive = TRUE, showWarnings = FALSE)
+
+url <- 
+  "https://www.ncei.noaa.gov/data/ghcnm/v4/precipitation/archive/ghcn-m_v4.00.00_prcp_s16970101_e20250630_c20250705.tar.gz"
+
+dest_file <- file.path(pdir, "ghcn-m_v4.00.00_prcp_s16970101_e20250630_c20250705.tar.gz")
+download.file(
+  url,
+  destfile = dest_file,
+  mode = "wb",
+  method = "curl"
+)
+
+#extremely large zipped file
+#untar(dest_file, exdir = pdir) FAILED so do this manually
+
+
+```
+
+    Put together the dataframes from temperature and precipitation
+```{r, US dataframe}
+
+#though we have already converted the temperature dataframe to filter for US stations, we have not done so for precipitation
+#replicating what we did for the temperature .dat file.
+#can't do so due to a giant file of csvs that came from extraction.
+#prec_us <- read.fwf(
+#  file.path(pdir, "ghcnm.prcp.v4.0.1.20250722.qcu.dat"), 
+#  widths = c(11, 4, 2, rep(5, 12)),
+#  col.names = c("ID", "Year", "Month", paste0("Value", 1:12)),
+#  strip.white = TRUE,
+#  fill = TRUE  # fills short rows with NAs
+#)
+
+library(purrr)
+
+prec_dir <- "~/Documents/SFU/NSERC/USRA 2/Data/ghcn/Precipitation/ghcn-m_v4.00.00_prcp_s16970101_e20250630_c20250705"
+
+pcsvs <- list.files(prec_dir, pattern = "\\.csv$", full.names = TRUE)
+
+#will take over 1 hour, causes R to crash
+#prec_all <- map_dfr(pcsvs, ~ read_csv(.x, show_col_types = FALSE))
+
+#instead filter for the station names in the file names first
+
+us_id <- us_stations$ID
+
+pcsvs_id <- sub("\\.csv$", "", basename(pcsvs))
+
+us_pcsvs <- pcsvs[pcsvs_id %in% us_id]
+
+#read all us station csvs, will take around 30 mins, make sure to SAVE after
+us_precip_list <- lapply(us_pcsvs, read_csv)
+
+#some rows share the same names but are classified as different classes
+
+us_precip_list <- lapply(us_precip_list, function(df) {
+  if (!is.null(df)) {
+    colnames(df) <- paste0("V", seq_along(df))  # Rename to V1, V2, ...
+  }
+  df
+})
+
+#still getting errors when just converting V9 to character
+us_precip_list <- lapply(us_precip_list, function(df) {
+  df$V9 <- as.character(df$V9)
+  return(df)
+})
+
+us_precip_list <- lapply(us_precip_list, function(df) {
+  df[] <- lapply(df, as.character)
+  df
+})
+
+#finally works
+us_precip_df <- bind_rows(us_precip_list)
+
+#there are no headers, so let's assign some headers
+
+us_headers <- c("ID", "Name", "Latitude", "Longitude", "Elevation", "YearMonth", "Precipitation (0.1mm)", "Unknown A", "Unknown B", "Unknown C", "Unknown D")
+
+colnames(us_precip_df) <- us_headers
+
+#change ym format, change its class, separate into two columns
+
+us_precip_df$year <- substr(us_precip_df$YearMonth, 1, 4)
+us_precip_df$month <- substr(us_precip_df$YearMonth, 5, 6)
+
+us_precip_df$Year <- as.integer(us_precip_df$year)
+us_precip_df$Month <- as.integer(us_precip_df$month)
+
+#filter for 2010-2025
+
+us_precip_filtered <- us_precip_df[us_precip_df$Year >= 2010 & us_precip_df$Year <= 2025, ]
+
+us_temp_prec <- inner_join(
+  us_precip_filtered, temp_us_filteredyrs,
+  by = c("ID", "Year", "Month")
+)
+
+
+us_climate <- us_temp_prec |>
+  dplyr::select(`Latitude.x`, `Longitude.x`, `Precipitation (0.1mm)`, `Temp_C`, `Year`, `Month`, `Elevation.x`) |>
+  rename(
+    Lat = `Latitude.x`,
+    Lon = `Longitude.x`,
+    Temperature = `Temp_C`,
+    Precipitation = `Precipitation (0.1mm)`,
+    Year = `Year`,
+    Month = `Month`,
+    Elevation = `Elevation.x`
+  )
+
+us_climate <- us_climate |>
+  mutate(Temperature = ifelse(Temperature == 99.99, NA, Temperature)) #make sure no more false temperature points!
+
+us_climate <- us_climate |>
+  mutate(
+    Lat = as.numeric(Lat),
+    Lon = as.numeric(Lon),
+    Year = as.integer(Year),
+    Month = as.integer(Month),
+    Temperature = as.numeric(Temperature),
+    Precipitation = as.numeric(Precipitation)/10, #convert precipitation to mm
+    Elevation = as.numeric(Elevation)
+  ) |>
+  mutate(Precipitation = ifelse(Precipitation < 0, 0, Precipitation)) #there are some neg values for precipitation
+
+
+
+```
+    
+    
+  Canada's data has a lot more NAs than US data, particularly in precipitation data.
+  
+    Put together Canada CSVs
+```{r, download CA}
+
+canada_dir <- path.expand("~/Documents/SFU/NSERC/USRA 2/Data")
+
+folders_all <- list.files(
+  canada_dir, pattern = "\\.csv$", full.names = TRUE, recursive = TRUE
+)
+
+canada_folders <- c(
+  "alberta_station_csvs",
+  "bc_station_csvs",
+  "manitoba_station_csvs",
+  "nb_station_csvs",
+  "nl_station_csvs",
+  "ns_station_csvs",
+  "nt_station_csvs",
+  "nu_station_csvs",
+  "on_station_csvs",
+  "pe_station_csvs",
+  "quebec_station_csvs",
+  "sk_station_csvs",
+  "yukon_station_csvs"
+)
+
+canada_csvs <- folders_all[
+  basename(dirname(folders_all)) %in% canada_folders
+]
+
+canada_climate <- map_dfr(
+  canada_csvs,
+  ~ read_csv(.x, col_types = cols(.default = col_character())) |> 
+      mutate(source_file = basename(.x))
+)
+
+canada_climate <- canada_climate |>
+  mutate(
+    Latitude = as.numeric(Latitude),
+    Longitude = as.numeric(Longitude),
+    Year = as.integer(Year),
+    Month = as.integer(Month),
+    Tm = as.numeric(Tm),
+    P = as.numeric(P)
+  )
+
+#add elevation from elevatr
+
+library(elevatr)
+library(sf)
+library(dplyr)
+
+stations_canada <- canada_climate |>
+  distinct(Latitude, Longitude) |>  #only unique points needed
+  filter(!is.na(Latitude), !is.na(Longitude)) |>
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = "EPSG:4326")
+
+elevation_data <- get_elev_point(locations = stations_canada, units = "meters", src = "aws")
+
+coords <- st_coordinates(elevation_data)  #matrix of lon/lat
+
+elev_canada <- elevation_data |>
+  st_drop_geometry() |>
+  mutate(Longitude = coords[, 1],
+         Latitude = coords[, 2]) |>
+  select(Longitude, Latitude, elevation)
+
+canada_climate <- canada_climate |>
+  left_join(elev_canada, by = c("Longitude", "Latitude"))
+
+canada_climate_filtered <- canada_climate |>
+  select(`Latitude`, `Longitude`, `P`, `Tm`, `Year`, `Month`, `elevation`) |>
+  rename(
+    Lat = `Latitude`,
+    Lon = `Longitude`,
+    Temperature = `Tm`,
+    Precipitation = `P`,
+    Year = `Year`,
+    Month = `Month`,
+    Elevation = `elevation`
+  )
+
+
+```
+
+    Merge U.S. and Canada Dataframes
+```{r, merge}
+
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(terra)
+
+na_climate <- bind_rows(canada_climate_filtered, us_climate)
+
+#remove Hawaii!!
+na_climate <- na_climate |>
+  filter(!(Lat >= 18 & Lat <= 22 & Lon >= -161 & Lon <= -154))
+
+#plot these points on a map
+
+climate_points <- vect(
+  na_climate,
+  geom = c("Lon", "Lat"),
+  crs = "EPSG:4326"
+)
+
+#I don't like how this na_shape contains Central America and Greenland. Let's make our own .shp file w just the US and Canada.
+na_shape <- vect(ne_countries(continent = "North America", returnclass = "sf"))
+
+plot(na_shape, col = "lightgray", border = "black", main = "North American Stations")
+plot(climate_points, col = "red", pch = 4, cex = 0.05, add = TRUE)
+
+#let's make our own na_shape
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+na_shape2 <- world |>
+  filter(admin %in% c("Canada", "United States of America"))
+
+na_shape2 <- vect(na_shape2)
+
+plot(na_shape2, col = "lightgray", border = "red", main = "North American Stations") #this contains hawaii still
+plot(climate_points, col = "black", pch = 4, cex = 0.01, add = TRUE)
+
+#bound the shape to be only within -150 to -50 degrees longitude
+
+na_shape2_sf <- sf::st_as_sf(na_shape2)
+
+na_bbox <- st_as_sfc(st_bbox(c(xmin = -140, xmax = -50, ymin = 0, ymax = 90), crs = st_crs(na_shape2_sf)))
+
+na_shape2_cropped <- st_intersection(na_shape2_sf, na_bbox)
+
+library(ggplot2)
+
+ggplot() +
+  geom_sf(data = na_shape2_cropped, fill = "white", color = "black") +
+  geom_point(data = na_climate, aes(x = Lon, y = Lat, color = Temperature), size = 1.5) + #without considering time
+  scale_color_viridis_c(name = "Temp (°C)") +
+  theme_minimal()
+
+na_shape2_v <- vect(na_shape2_cropped)
+crs(na_shape2_v)
+
+plot(na_shape2_v, col = "lightgray", border = "red", main = "North American Stations")
+plot(climate_points, col = "black", pch = 4, cex = 0.01, add = TRUE)
+
+```
+
+  c. Interpolation of Temperature, Precipitation, Elevation and Snow Water Equivalent
+  
+      Temperature
+```{r, idw temperature}
+
+library(gstat)
+library(sp)
+library(raster)
+library(dplyr)
+library(terra)
+
+#loop through each month
+
+na_climate <- na_climate |>
+  mutate(
+    Month = sprintf("%02d", as.numeric(Month)),
+    time = paste0(Year, "-", Month)
+  )
+
+time_steps <- unique(na_climate$time)
+
+#I see that some of the summer interpolations have very low temperatures in the U.S, which is not true.
+#we need to clean up our na_climate dataframe above!
+
+temp_list <- list()
+
+lon_seq <- seq(-140, -50, by = 0.5)
+lat_seq <- seq(0, 85, by = 0.5)
+
+grid_template <- expand.grid(Lon = lon_seq, Lat = lat_seq)
+coordinates(grid_template) <- ~Lon + Lat
+gridded(grid_template) <- TRUE
+proj4string(grid_template) <- CRS("+proj=longlat +datum=WGS84")
+
+for (t in time_steps) {
+  df_t <- na_climate |>
+    #make sure to filter out the NAs
+    filter(time == t & !is.na(Temperature))
+  
+  if (nrow(df_t) >= 5) {  #ensure enough points
+    #create spatial points
+    coordinates(df_t) <- ~Lon + Lat
+    #using standard CRS
+    proj4string(df_t) <- CRS("+proj=longlat +datum=WGS84")
+    
+    #interpolate with IDW
+    idw_result <- idw(Temperature ~ 1, df_t, newdata = grid_template, idp = 2.0)
+    
+    
+    #convert to raster
+    r <- raster(idw_result)
+    
+    #plot (remember here r is only one layer or one time step, and it will be replaced by the next time step)
+    plot(r, main = paste("IDW Temp:", t), col = terrain.colors(20))
+    
+    names(r) <- t
+    
+    temp_list[[t]] <- r
+    
+  }
+}
+
+temp_stack <- stack(temp_list)
+
+#make sure your time steps are styled like yyyy-mm-dd
+#we need to preserve the time column of our data
+time_steps_date <- as.Date(paste0(time_steps, "-01"))
+names(temp_stack) <- format(time_steps_date, "%Y-%m")
+
+#make sure we have a terra raster here for masking later
+#time() only works with terra
+temp_stack_terra <- rast(temp_stack)
+time(temp_stack_terra) <- time_steps_date
+
+#saves to the same directory of your rmd file
+writeRaster(temp_stack, filename = "idw_na_temp.tif", format = "GTiff", overwrite = TRUE)
+
+
+
+```
+
+    Precipitation
+```{r, idw precipitation}
+
+#repeat the loop from the previous chunk
+
+prec_list <- list()
+
+lon_seq <- seq(-140, -50, by = 0.5)
+lat_seq <- seq(0, 85, by = 0.5)
+
+grid_template <- expand.grid(Lon = lon_seq, Lat = lat_seq)
+coordinates(grid_template) <- ~Lon + Lat
+gridded(grid_template) <- TRUE
+proj4string(grid_template) <- CRS("+proj=longlat +datum=WGS84")
+
+for (t in time_steps) {
+  df_t <- na_climate |>
+    #make sure to filter out the NAs
+    filter(time == t & !is.na(Precipitation))
+  
+  if (nrow(df_t) >= 5) {  #ensure enough points
+    #create spatial points
+    coordinates(df_t) <- ~Lon + Lat
+    #using standard CRS
+    proj4string(df_t) <- CRS("+proj=longlat +datum=WGS84")
+    
+    #interpolate with IDW
+    idw_result <- idw(Precipitation ~ 1, df_t, newdata = grid_template, idp = 2.0)
+    
+    #convert to raster
+    r <- raster(idw_result)
+    
+    #plot (remember here r is only one layer or one time step, and it will be replaced by the next time step)
+    plot(r, main = paste("IDW Prec:", t), col = terrain.colors(20))
+    
+    names(r) <- t
+    
+    prec_list[[t]] <- r
+    
+  }
+}
+
+prec_stack <- stack(prec_list)
+
+#make sure your time steps are styled like yyyy-mm-dd
+#we need to preserve the time column of our data
+time_steps_date <- as.Date(paste0(time_steps, "-01"))
+names(precip_rast) <- format(time_steps_date, "%Y-%m")
+
+#make sure we have a terra raster here for masking later
+#time() only works with terra
+prec_stack_terra <- rast(prec_stack)
+time(precip_rast) <- time_steps_date
+
+writeRaster(prec_stack, filename = "idw_na_prec.tif", format = "GTiff", overwrite = TRUE)
+
+
+```
+
+
+    Masking Temperature and Precipitation to North America's Shape
+```{r}
+
+#we are not interpolating elevation as we have data from R itself
+#transform one of our interpolated rasters into a spatialpointsdataframe and extract elevation at their points
+#above does not work because you are getting elevation in the ocean, which is negative
+
+library(sp)
+library(elevatr)
+library(raster)
+library(terra)
+
+temp_rast <- rast("idw_na_temp.tif")
+precip_rast <- rast("idw_na_prec.tif")
+
+#add time column
+time_steps_date <- as.Date(paste0(time_steps, "-01"))
+time(temp_rast) <- time_steps_date
+time(precip_rast) <- time_steps_date
+
+#make sure the crs matches between both
+temp_rast <- project(temp_rast, crs(na_shape2_v))
+precip_rast <- project(precip_rast, crs(na_shape2_v))
+
+#crop to the extent of the bounding box
+#using the terra raster
+temp_crop <- crop(temp_rast, na_shape2_v)
+precip_crop <- crop(precip_rast, na_shape2_v)
+
+#mask from the bounding box
+temp_mask <- mask(temp_crop, na_shape2_v)
+precip_mask <- mask(precip_crop, na_shape2_v)
+
+#REMEMBER TO SAVE!
+writeRaster(temp_mask, "masked_temp.tif", overwrite = TRUE)
+writeRaster(precip_mask, "masked_precip.tif", overwrite = TRUE)
+
+#plot doesn't look very clean
+plot(temp_mask[[1]], main = "Land-only Temp 2010 Jan")
+plot(na_shape2_v, add = TRUE, border = "black")
+
+plot(temp_rast[[1]], main = "Uncropped Temp 2010 Jan")
+plot(na_shape2_v, add = TRUE, border = "black")
+
+plot(precip_mask[[1]], main = "Land-only Precipitation 2010 Jan")
+plot(na_shape2_v, add = TRUE, border = "black")
+
+#convert to sf points for later use
+#point geometry object
+
+#temp_idf <- terra::as.points(temp_mask)
+#temp_sf <- st_as_sf(temp_idf)
+
+#precip_idf <- terra::as.points(precip_mask)
+#precip_sf <- st_as_sf(precip_idf)
+
+
+
+```
+
+
+  d. Historical Global Flood Database
+```{r, flood}
+
+library(lubridate)
+library(readxl)
+library(purrr)
+library(sf)
+
+#From the University of Colorado
+
+flood <- read.table("~/Documents/SFU/NSERC/USRA 2/Data/Flood/FloodArchive.DAT", header = FALSE, fill = TRUE, sep = "")
+head(flood)
+
+#this is a DAT file, which means that it is a fixed-width file
+
+flood_file <- path.expand("~/Documents/SFU/NSERC/USRA 2/Data/Flood/FloodArchive.DAT")
+
+col_widths <- c(7, 8, 9, 10, 40, 3, 3)
+
+#Incorrect encoding or corrupted file
+#flood_df <- read_fwf(
+#  file = flood_file,
+#  fwf_widths(col_widths, col_names = c("event_id", "date", "latitude", "longitude", "location", "country", "magnitude")),
+#  locale = locale(encoding = "UTF-8"),
+#  trim_ws = TRUE
+#)
+
+#use excel instead
+
+flood_xl <- read_excel(
+  "~/Documents/SFU/NSERC/USRA 2/Data/Flood/FloodArchive.xlsx",
+)
+
+head(flood_xl)
+
+#filter for Canada and the U.S.
+
+flood_na <- flood_xl |>
+  filter(Country %in% c("USA", "Canada"))
+
+head(flood_na)
+
+#arrange the time so that flood time is based on the beginning time
+#i also want to create a column for duration
+
+flood_na_expanded <- flood_na |>
+  mutate(
+    Began = as.Date(Began),
+    Ended = as.Date(Ended),
+    #interpret began as year month only, without the date
+    Began_month = floor_date(Began, "month"),
+    time = format(Began_month, "%Y-%m"),
+    duration = as.numeric(difftime(Ended, Began, units = "days"))
+  ) |>
+  dplyr::select(lat, long, Area, Began, Ended, time, duration, Dead, Displaced, Severity)
+
+
+#import in the shape (.shp file) of floods from the Index page
+#make sure to download .shp along with .prj, .dbf, .shx files
+
+flood_shape <- st_read("~/Documents/SFU/NSERC/USRA 2/Data/Flood/FloodArchive_region.shp")
+
+names(flood_shape)
+
+flood_na_shape <- flood_shape |>
+  filter(COUNTRY %in% c("USA", "Canada"))
+
+plot(st_geometry(flood_na_shape), col = "blue", main = "Floods in USA and Canada")
+
+
+
+```
+
+
+  e. Create elevation raster of Canada and the U.S.
+```{r, elev Canada + US}
+
+library(sf)
+library(sp)
+library(gstat)
+library(raster)
+
+#we will use IDW interpolation for elevation
+
+elev_sf <- st_as_sf(na_climate, coords = c("Lon", "Lat"), crs = "EPSG:4326")
+elev_sp <- as(elev_sf, "Spatial")
+
+lon_range <- seq(-140, -50, by = 0.5)
+lat_range <- seq(0, 85, by = 0.5)
+
+grid <- expand.grid(Lon = lon_range, Lat = lat_range)
+coordinates(grid) <- ~Lon+Lat
+gridded(grid) <- TRUE
+proj4string(grid) <- CRS("+proj=longlat +datum=WGS84")
+
+idw_elev <- idw(Elevation ~ 1, elev_sp, newdata = grid, idp = 2)
+
+elev_rast <- raster(idw_elev)
+
+writeRaster(elev_rast, filename = "elev_idw.tif", format = "GTiff", overwrite = TRUE)
+
+#make sure to mask this idw the same way that you masked temperature and precipitation
+#make sure that the raster is in terra format
+elev_terra <- rast("elev_idw.tif")
+
+elev_crop <- crop(elev_terra, na_shape2_v)
+
+elev_mask <- mask(elev_crop, na_shape2_v)
+
+writeRaster(elev_mask, filename ="masked_elev.tif", overwrite = TRUE)
+```
+
+
+
+  f. Merge dataframes together with flood as a binary variable
+```{r, binary flood}
+
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(elevatr)
+library(sf)
+library(raster)
+library(rmapshaper)
+
+#you can either choose to use the dataframe created from the flood_xl and create buffer points to represent area
+#and extract the lat and lon within each buffer point as flood = 1
+#OR you can choose to use flood .shp file which also contains the same info as above
+#but the shape already addresses the area
+flood_na_shape$Began <- as.Date(flood_na_shape$BEGAN)
+flood_na_shape$Ended <- as.Date(flood_na_shape$ENDED)
+
+flood_na_shape <- flood_na_shape |>
+  mutate(
+    start_month = floor_date(Began, "month"),
+    duration = as.numeric(Ended - Began)
+  )
+
+#preserving the time column
+temp_df <- as.data.frame(temp_mask, xy = TRUE, cells = FALSE, na.rm = FALSE, long = TRUE)
+
+temp_df <- temp_df |>
+  rename(
+    x = x,
+    y = y
+  )
+
+temp_long <- temp_df |>
+  pivot_longer(
+    cols = starts_with("idw_na_temp_"),  #safer than using -c(x, y)
+    names_to = "date_str",
+    values_to = "temperature"
+  ) |>
+  mutate(
+    #extract number from the column name like "idw_na_temp_1"
+    time_index = as.integer(str_extract(date_str, "\\d+")),
+
+    date = as.Date("2010-01-01") + months(time_index - 1)
+  ) |>
+  dplyr::select(x, y, date, temperature)
+
+temp_long <- temp_long |>
+  mutate(date = format(date, "%Y-%m"))  #changes to character with just year-month
+
+temp_long <- temp_long |>
+  mutate(date = as.character(date))
+
+precip_df <- as.data.frame(precip_mask, xy = TRUE, cells = FALSE, na.rm = FALSE,long = TRUE)
+
+precip_df <- precip_df |>
+  rename(
+    x = x,
+    y = y
+  )
+
+precip_long <- precip_df |>
+  pivot_longer(
+    cols = starts_with("idw_na_prec_"),  #safer than using -c(x, y)
+    names_to = "date_str",
+    values_to = "precipitation"
+  ) |>
+  mutate(
+    #extract number from the column name like "idw_na_temp_1"
+    time_index = as.integer(str_extract(date_str, "\\d+")),
+
+    date = as.Date("2010-01-01") + months(time_index - 1)
+  ) |>
+  dplyr::select(x, y, date, precipitation)
+
+precip_long <- precip_long |>
+  mutate(date = as.Date(date))
+
+precip_long <- precip_long |>
+  mutate(date = format(date, "%Y-%m"))  #changes to character with just year-month
+
+precip_long <- precip_long |>
+  mutate(date = as.character(date))
+
+
+#join together temp and prec in one dataframe
+climate_df <- temp_long |>
+  left_join(precip_long, by = c("x", "y", "date"))
+
+#now we want to add elevation to the newly interpolated points
+coords <- climate_df |>
+  select(x, y) |>
+  #give me all the distinct/unique coordinates in my interpolated dataframe
+  distinct() |>
+  st_as_sf(coords = c("x", "y"), crs = "EPSG:4326")
+
+#don't use this as the API for downloading elevatr has crashed
+#elev_pt <- get_elev_point(locations = coords, src = "aws", z = 10, override_size_check = TRUE)
+
+#use interpolated elevation instead
+
+elev_df <- as.data.frame(elev_mask, xy = TRUE, cells = FALSE, na.rm = FALSE, long = TRUE)
+
+elev_df <- elev_df |>
+  rename(
+    x = x,
+    y = y
+  )
+
+climate_df$x <- as.numeric(climate_df$x)
+climate_df$y <- as.numeric(climate_df$y)
+elev_df$x <- as.numeric(elev_df$x)
+elev_df$y <- as.numeric(elev_df$y)
+
+climate_elev <- climate_df |>
+  left_join(elev_df |> dplyr::select(x, y, elev_idw), by = c("x", "y"))
+
+climate_elev <- climate_elev |>
+  mutate(
+    date_full = paste0(date, "-01"),
+    date = as.Date(date_full)
+  ) |>
+  dplyr::select(-date_full)
+
+
+
+#now merge with flood
+
+#flood and climate_elev don't have a crs
+sf::st_crs(flood_na_shape)
+sf::st_crs(climate_elev)
+
+flood_na_shape <- st_set_crs(flood_na_shape, 4326)
+climate_sf <- st_as_sf(climate_elev, coords = c("x", "y"), crs = 4326)
+
+#I need to join together climate and flood dataframes by the time
+
+climate_sf$date <- as.Date(climate_sf$date)
+
+flood_na_shape$start_month <- as.Date(flood_na_shape$start_month)
+
+flood_na_shape <- flood_na_shape |>
+  filter(start_month >= as.Date("2010-01-01") & start_month <= as.Date("2025-12-31"))
+
+#there are invalid polygons
+invalid_index <- which(!st_is_valid(flood_na_shape))
+invalid_polys <- flood_na_shape[invalid_index, ]
+
+flood_cleaned <- sf::st_make_valid(flood_na_shape)
+
+table(st_is_valid(flood_cleaned))
+
+#still 2 left, drop them but know that the polygons are quite corrupted
+
+flood_cleaned <- flood_cleaned[st_is_valid(flood_cleaned), ]
+
+dates <- unique(climate_sf$date)
+
+flood_climate <- map_dfr(dates, function(d) {
+  climate_day <- climate_sf |> filter(date == d)
+  flood_day <- flood_cleaned |> filter(start_month == d)
+  
+  if (nrow(flood_day) == 0) {
+    climate_day$flood <- 0
+  } else {
+    #check if each point is within any flood polygon
+    climate_day$flood <- lengths(st_within(climate_day, flood_day)) > 0
+    climate_day$flood <- as.integer(climate_day$flood)
+  }
+  
+  return(climate_day)
+})
+
+#lets drop date to make this easier for regression building
+
+flood_climate_all <- flood_climate |> 
+  dplyr::select(-date)
+
+saveRDS(flood_climate_all, "flood_climate_all.rds")
+saveRDS(flood_climate, "flood_climate.rds")
+st_write(flood_climate, "flood_climate.gpkg", delete_dsn = TRUE)
+st_write(flood_climate_all, "flood_climate_all.gpkg", delete_dsn = TRUE)
+```
+
+
+##2. Regression Models Using Coordinate Points
+    
+  a. Binomial Logistic Regression
+    Research Question: What is the probability of getting a flood in each grid?
+```{r, logit}
+
+library(ggplot2)
+
+lr1 <- glm(
+  flood ~ temperature + precipitation + elev_idw,
+  data = flood_climate_all,
+  family = binomial()
+)
+
+summary(lr1)
+
+#map out susceptibility, NOT considering time so far
+
+no_na_flood <- flood_climate |> 
+  filter(!is.na(flood), !is.na(temperature), !is.na(precipitation), !is.na(elev_idw))
+
+no_na_flood$predict <- predict(lr1, type = "response")
+
+
+ggplot(no_na_flood) +
+  geom_sf(aes(color = predict), size = 0.2) +
+  scale_color_viridis_c(option = "plasma", na.value = "grey90", name = "Flood Susceptibility") +
+  theme_minimal() +
+  labs(
+    title = "Predicted Flood Susceptibility",
+    subtitle = "Based on logistic regression of climate and elevation data"
+  )
+
+#what about when we are considering out target month?
+
+flood_climate_20166 <- flood_climate |> filter(date == target_date)
+
+no_na_flood <- flood_climate_20166 |> 
+  filter(!is.na(flood), !is.na(temperature), !is.na(precipitation), !is.na(elev_idw))
+
+#here we are predicting the probability of a flood happening (flood = 1)
+#have not set a threshold if we want to predict for a hard response
+#if prob > 0.5 then classify as 1 (flood)
+#else then classify as 0 (no flood)
+
+no_na_flood$predict <- predict(lr1, newdata = no_na_flood, type = "response")
+
+ggplot(no_na_flood) +
+  geom_sf(aes(color = predict), size = 0.2) +
+  scale_color_viridis_c(option = "plasma", na.value = "grey90", name = "Flood Susceptibility") +
+  theme_minimal() +
+  labs(
+    title = "Predicted Flood Susceptibility on 2016-06-01",
+    subtitle = "Logistic regression prediction based on temperature, precipitation and elevation"
+  )
+
+#splitting in to testing and training data
+#not considering time here, as my random forest doesn't consider for time below
+#set training data and testing data
+n <- nrow(no_na_flood)
+train_indices <- sample(seq_len(n), size = 0.7 * n)
+
+train_data <- no_na_flood[train_indices, ]
+#testing data is everything not in the training data
+test_data <- no_na_flood[-train_indices, ]
+
+test_data$predict <- predict(lr1, newdata = test_data, type = "response")
+
+
+```
+
+
+  b. Random Forest (Binomial Response)
+    Research Question: What is the probability of getting a flood in each grid?
+    Although it is possible to predict for the binary response variable, given the testing data, I have decided not to predict for a response (or class) due to the purpose of my analogue map, which exists to match cities of similar risk (probabilities of experiencing a flood).
+```{r, rf}
+
+library(randomForest)
+
+no_na_flood <- flood_climate |> 
+  filter(!is.na(flood), !is.na(temperature), !is.na(precipitation), !is.na(elev_idw))
+
+#set training data and testing data
+n <- nrow(no_na_flood)
+train_indices <- sample(seq_len(n), size = 0.7 * n)
+
+train_data <- no_na_flood[train_indices, ]
+#testing data is everything not in the training data
+test_data <- no_na_flood[-train_indices, ]
+
+rf1 <- randomForest(
+  as.factor(flood) ~ temperature + precipitation + elev_idw,
+  data = train_data,
+  ntree = 50,
+  importance = TRUE
+)
+
+#predict susceptibility in testing data
+#here we want to predict the probability of a flood happening (flood = 1)
+test_data$predicted_prob <- predict(rf1, newdata = test_data, type = "prob")[, 2]
+#here we are getting the result of a majority vote (either happened or didn't happen) but this is dependent on ntree
+#test_data$predicted_class_custom <- ifelse(test_data$predicted_prob > 0.7, 1, 0) #to decide on a threshold of confidence
+#test_data$predicted_class <- predict(rf1, newdata = test_data, type = "response")
+
+
+```
+
+    Using library(ranger) instead to run the random forest.
+```{r, ranger}
+
+library(ranger)
+
+sapply(train_data, class)
+#ranger can't work with sf objects
+train_data <- train_data |> st_drop_geometry()
+test_data <- test_data |> st_drop_geometry()
+
+rf2 <- ranger(
+  formula = as.factor(flood) ~ temperature + precipitation + elev_idw,
+  data = train_data,
+  num.trees = 100,
+  mtry = 2, #number of variables to possibly split at in each node
+  importance = "impurity",#or "permutation" if you want fancier variable importance
+  probability = TRUE, 
+  seed = 123
+)
+
+predictions <- predict(rf2, data = test_data, type = "response")
+
+test_data$predicted_flood_prob <- predictions$predictions[, "1"]
+
+```
+
+
+
+  c. AUROC Scores
+```{r, auroc}
+
+library(pROC)
+
+roc_lr <- roc(test_data$flood, test_data$predict)
+roc_rf <- roc(test_data$flood, test_data$predicted_flood_prob)
+
+auc_logit <- auc(roc_lr)
+auc_rf <- auc(roc_rf)
+
+print(auc_logit)
+print(auc_rf)
+
+plot(roc_lr, col = "blue", print.auc = TRUE, main = "ROC Curves")
+plot(roc_rf, col = "forestgreen", add = TRUE, print.auc = TRUE, print.auc.y = 0.4)
+legend("bottomright", legend = c("Logistic Regression", "Random Forest"),
+       col = c("blue", "forestgreen"), lwd = 2)
+
+```
+
+  c. Overfitting Test
+```{r, overfitting}
+
+#for the random forest (ranger)
+train_pred <- predict(rf2, data = train_data)$predictions
+train_acc <- mean(train_pred == train_data$flood)
+
+test_pred <- predict(rf2, data = test_data)$predictions
+test_acc <- mean(test_pred == test_data$flood)
+
+cat("Training Accuracy:", train_acc, "\n")
+cat("Testing Accuracy:", test_acc, "\n")
+
+#change threshold to 0.1
+
+train_probs <- predict(rf2, data = train_data, type = "response", probability = TRUE)$predictions
+train_pred <- ifelse(train_probs[, "1"] > 0.1, "1", "0")
+train_acc <- mean(train_pred == train_data$flood)
+
+test_probs <- predict(rf2, data = test_data, type = "response", probability = TRUE)$predictions
+test_pred <- ifelse(test_probs[, "1"] > 0.1, "1", "0")
+test_acc <- mean(test_pred == test_data$flood)
+
+cat("Training Accuracy:", train_acc, "\n")
+cat("Testing Accuracy:", test_acc, "\n")
+
+```
+
+  d. Ordinal Logistic Regression
+```{r, polr}
+library(MASS)
+
+#response variable being severity this time
+#we have to generate a dataframe that classifies flood severity as 1, 2 or 3
+
+flood_cleaned$cat <- recode(flood_cleaned$SEVERITY, `1` = 1, `1.5` = 2, `2` = 3)
+
+flood_cleaned$cat <- factor(flood_cleaned$cat, ordered = TRUE)
+
+
+
+flood_points <- flood_climate |>
+  filter(flood == 1) |> #keep only flagged flood occurrences
+  mutate(date = as.Date(date))  #ensure Date
+
+message("flood points: ", nrow(flood_points))
+
+if (st_crs(flood_points) != st_crs(flood_cleaned)) {
+  flood_points <- st_transform(flood_points, st_crs(flood_cleaned))
+}
+
+ix_list <- st_intersects(flood_points, flood_cleaned)
+
+if (all(lengths(ix_list) == 0)) {
+  stop("No spatial intersections found between flood points and flood polygons.")
+}
+
+point_ids <- rep(seq_along(ix_list), lengths(ix_list))
+poly_ids  <- unlist(ix_list)
+
+
+#find spatial matches, THEN filter for start_month and select the duplicate with the highest severity
+matches <- tibble(point = point_ids, poly = poly_ids) |>
+  mutate(
+    point_date = flood_points$date[point],
+    start_month = flood_cleaned$start_month[poly],
+    cat = flood_cleaned$cat[poly]
+  )
+
+matches <- matches |>
+  filter(!is.na(start_month)) 
+
+matches <- matches |>
+  mutate(cat_num = as.integer(as.character(cat))) |>
+  group_by(point) |>
+  slice_max(cat_num, n = 1, with_ties = FALSE) |>
+  ungroup()
+
+flood_points <- flood_points |> mutate(.point = row_number())
+
+flood_points_cat <- flood_points |>
+  left_join(matches |> dplyr::select(point, cat), by = c(".point" = "point")) |>
+  dplyr::select(-.point)
+
+n_points_total <- nrow(flood_points)
+n_points_matched <- sum(!is.na(flood_points_cat$cat))
+n_polygons_matched <- length(unique(matches$poly))
+
+message("total flood==1 points: ", n_points_total)
+message("points matched (date & geometry): ", n_points_matched)
+message("distinct polygons matched: ", n_polygons_matched)
+
+saveRDS(flood_points_cat, "flood_points_cat.rds")
+
+#add death toll (DEAD) to flood_points_cat
+
+flood_points_cat <- readRDS("flood_points_cat.rds")
+
+matches <- matches |>
+  mutate(DEAD_total = flood_cleaned$DEAD[poly])
+
+poly_point_counts <- matches |>
+  count(poly, name = "points_in_poly")
+
+matches <- matches |>
+  left_join(poly_point_counts, by = "poly") |>
+  mutate(DEAD_per_point = DEAD_total / points_in_poly)
+
+flood_points_cat <- flood_points_cat |>
+  mutate(.point = row_number()) |>
+  left_join(matches |> dplyr::select(point, DEAD_per_point),
+            by = c(".point" = "point")) |>
+  dplyr::select(-.point)
+
+flood_points_cat$death <- round(flood_points_cat$DEAD_per_point)
+
+#add displaced number of people to flood_points_cat
+
+matches <- matches |>
+  mutate(
+    DISPLACED_total = flood_cleaned$DISPLACED[poly]
+  )
+
+poly_point_counts <- matches |>
+  count(poly, name = "points_in_poly")
+
+poly_point_counts <- poly_point_counts |>
+  rename(n = points_in_poly)
+
+matches <- matches |>
+  left_join(poly_point_counts, by = "poly") |>
+  mutate(
+    DISPLACED_per_point  = DISPLACED_total/n
+  )
+
+flood_points_cat <- flood_points_cat |>
+  mutate(.point = row_number()) |>
+  left_join(matches |> dplyr::select(point, DISPLACED_per_point),
+            by = c(".point" = "point")) |>
+  dplyr::select(-.point)
+
+flood_points_cat$displaced <- round(flood_points_cat$DISPLACED_per_point)
+
+flood_points_cat <- flood_points_cat |>
+  dplyr::select(-flood)
+
+saveRDS(flood_points_cat, "flood_points_cat_dead_displaced.rds")
+
+#below is an ordinal logistic regression done for severity of floods (NOT including death and displaced)
+
+polr1 <- polr(
+  as.factor(cat) ~ temperature + precipitation + elev_idw,
+  data = flood_points_cat,
+  method = "logistic"
+)
+
+#REMEMBER: t value here means estimate/standard error
+#t value of ~2 means that p < 0.05
+#calculate p value #p_values <- 2 * (1 - pnorm(abs(coefs[, "t value"])))
+summary(polr1)
+coefs <- summary(polr1)$coefficients
+polr1_p <- 2 * (1 - pnorm(abs(coefs[, "t value"])))
+polr1_p
+
+#predict the probability of getting a flood of category 2 in June 2016
+flood_climate_20161 <- flood_climate |> filter(date == target_date)
+
+no_na_flood <- flood_climate_20161 |> 
+  filter(!is.na(temperature), !is.na(precipitation), !is.na(elev_idw))
+
+#REMEMBER: the research question is, if there is a flood, what is the probability that this flood is a category 2 flood?
+no_na_flood$predict <- predict(polr1, newdata = no_na_flood, type = "probs")
+
+#filter for only category 2
+no_na_flood$cat2 <- no_na_flood$predict[, "2"]
+
+ggplot(no_na_flood) +
+  geom_sf(aes(color = cat2), size = 0.2) +
+  scale_color_viridis_c(option = "plasma", na.value = "grey90", name = "Category 2 Flood Susceptibility") +
+  theme_minimal() +
+  labs(
+    title = "Predicted Flood Susceptibility for June 2016",
+    subtitle = "POLR prediction based on temperature, precipitation and elevation"
+  )
+
+
+```
+
+
+  e. Predicting Human Death and Displaced Residents at Each Coordinate Point
+    Research Question: Given that there is a flood, how many people will die at this coordinate point?
+    Given that there is a flood, how many people will be displaced at this coordinate point?
+```{r, death}
+
+library(ggplot2)
+library(MASS)
+
+urban_yn <- function(sf_df) {
+  if (!inherits(sf_df, "sf")) stop("Input must be an sf object")
+  
+  #extract coordinates from geometry column
+  coords <- sf::st_coordinates(sf_df)
+  lat <- coords[, "Y"]
+  lon <- coords[, "X"]
+
+  #bounding boxes for major cities in North America (without Alaska)
+  city_boxes <- list(
+    #Canada
+    toronto = c(43.2, 44.2, -80.2, -78.0),
+    vancouver = c(49.0, 49.5, -123.5, -122.0),
+    montreal = c(45.3, 45.8, -74.1, -73.3),
+    calgary = c(50.8, 51.3, -114.3, -113.8),
+    edmonton = c(53.3, 53.8, -113.8, -113.2),
+    ottawa = c(45.2, 45.6, -76.1, -75.3),
+    winnipeg = c(49.7, 50.1, -97.4, -96.9),
+    quebec = c(46.7, 47.0, -71.5, -71.0),
+    hamilton = c(43.1, 43.4, -80.1, -79.6),
+    halifax = c(44.5, 44.8, -63.8, -63.4),
+    
+    #US
+    nyc = c(40.4, 41.2, -74.5, -73.3),
+    la = c(33.5, 34.4, -118.7, -117.6),
+    chicago = c(41.5, 42.2, -88.2, -87.3),
+    houston = c(29.5, 30.2, -95.8, -95.0),
+    phoenix = c(33.2, 33.8, -112.3, -111.5),
+    philadelphia = c(39.8, 40.2, -75.4, -74.8),
+    dallas = c(32.5, 33.1, -97.5, -96.5),
+    miami = c(25.4, 26.3, -80.5, -80.0),
+    atlanta = c(33.5, 34.1, -84.6, -84.1),
+    dc = c(38.7, 39.1, -77.2, -76.8),
+    boston = c(42.1, 42.6, -71.2, -70.8),
+    sf_bay = c(37.2, 38.1, -123.0, -121.7),
+    seattle = c(47.4, 47.8, -122.5, -122.1),
+    detroit = c(42.2, 42.6, -83.4, -82.9),
+    minneapolis = c(44.8, 45.2, -93.5, -93.0)
+  )
+
+  #start with all rural
+  urban <- rep(0, nrow(sf_df))
+
+  #check each bounding box
+  for (city in names(city_boxes)) {
+    bounds <- city_boxes[[city]]
+    matches <- lat >= bounds[1] & lat <= bounds[2] & lon >= bounds[3] & lon <= bounds[4]
+    urban[matches] <- 1
+  }
+  
+  sf_df$urban <- urban
+  return(sf_df)
+}
+
+
+flood_climate <- urban_yn(flood_climate)
+
+saveRDS(flood_climate, "flood_climate_urban.rds")
+
+no_na_flood <- flood_climate |> 
+  filter(!is.na(flood), !is.na(temperature), !is.na(precipitation), !is.na(elev_idw))
+
+ggplot(no_na_flood) +
+  geom_sf(aes(color = as.factor(urban)), size = 0.2, alpha = 0.5) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(color = "Urban Dummy", title = "Urban vs Rural Classification (Approximate)")
+
+
+#run a negative binomial regression
+
+flood_death <- flood_points_cat |>
+  filter(!is.na(death), !is.na(temperature), !is.na(precipitation), 
+         !is.na(elev_idw), !is.na(urban))
+
+nb1 <- glm(death ~  temperature + precipitation + elev_idw + urban, #switched to Poisson regression
+                   data = flood_death,
+                    family = "poisson"
+              )
+
+
+summary(nb1)
+
+nb2 <- glm(displaced ~  temperature + precipitation + elev_idw + urban, #switched to Poisson regression
+                   data = flood_death,
+                    family = "poisson"
+              )
+
+summary(nb2)
+
+```
+
+
+##3. Regression Models with Raster Grids
+  
+  Using previously masked GeoTIFF files of interpolated temperature, precipitation and elevation, we want to combine all rasters together, after resampling to 0.22 degree resolution. This chunk is useful if you don't want to start over with previous chunks. You can just load up the TIF files and start from here. 
+```{r, raster}
+
+library(terra)
+
+#rasterize temperature, precipitation and elevation
+temp_tif <- rast("masked_temp.tif")
+precip_tif <- rast("masked_precip.tif")
+elev_tif <- rast("masked_elev.tif")
+
+#create a 0.25 degree resolution template raster
+ext_tif <- ext(temp_tif)
+r_template <- rast(ext_tif, resolution = 0.22, crs = crs(temp_tif))
+
+#resample all GeoTIFFs to 0.22 by using bilinear method
+temp_22 <- resample(temp_tif, r_template, method = "bilinear")
+precip_22 <- resample(precip_tif, r_template, method = "bilinear")
+elev_22 <- resample(elev_tif, r_template, method = "bilinear")
+
+#stack all rasters together
+raster_22 <- c(temp_22, precip_22, elev_22)
+
+writeRaster(raster_22, filename = "raster_22.tif", overwrite = TRUE)
+
+
+```
+
+
+  Let's convert the merged dataframe of flood and climate into a raster with 0.22 resolution.
+```{r, polygons}
+
+flood_climate <- readRDS("flood_climate.rds")
+
+bbox <- st_bbox(flood_climate)
+r_template <- rast(
+  xmin = bbox["xmin"], xmax = bbox["xmax"],
+  ymin = bbox["ymin"], ymax = bbox["ymax"],
+  resolution = 0.22, crs = "EPSG:4326"
+)
+
+#we have a time component and 4 variables
+
+time_slices <- sort(unique(flood_climate$date))
+raster_list <- list()
+
+for (i in seq_along(time_slices)) {
+  t <- time_slices[i]
+  df_t <- flood_climate |> filter(date == t)
+  
+  #rasterize each variable for each single time slice
+  temp_t <- rasterize(df_t, r_template, field = "temperature", fun = mean)
+  precip_t <- rasterize(df_t, r_template, field = "precipitation", fun = mean)
+  elev_t <- rasterize(df_t, r_template, field = "elev_idw", fun = mean)
+  flood_t <- rasterize(df_t, r_template, field = "flood", fun = max)
+  
+  #combine all 4 into a mini stack
+  t_stack <- c(temp_t, precip_t, elev_t, flood_t)
+  names(t_stack) <- c(
+    paste0("temperature_", t),
+    paste0("precipitation_", t),
+    paste0("elevation_", t),
+    paste0("flood_", t)
+  )
+  
+  raster_list[[i]] <- t_stack
+  
+}
+
+flood_climate_rast <- do.call(c, raster_list)
+
+writeRaster(flood_climate_rast, "flood_climate_rast.tif", overwrite = TRUE)
+
+```
+
+
+  a. Binary Logistic Regression
+```{r, lr2}
+
+library(terra)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+
+#let's train our logistic regression with 70/30 split
+
+flood_climate_rast <- rast("flood_climate_rast.tif")
+
+flood_climate_df <- as.data.frame(flood_climate_rast, xy = TRUE, na.rm = TRUE)
+
+flood_climate_df_long <- flood_climate_df |>
+  pivot_longer(
+    cols = -c(x, y),
+    names_to = "variable",
+    values_to = "value"
+  ) |>
+  separate(variable, into = c("var", "date"), sep = "_(?=\\d{4})") |>
+  pivot_wider(names_from = "var", values_from = "value") |>
+  drop_na(temperature, precipitation, elevation, flood)
+
+flood_climate_df_long$flood <- as.integer(flood_climate_df_long$flood > 0)
+
+n <- nrow(flood_climate_df_long)
+train_indices <- sample(seq_len(n), size = 0.7 * n)
+
+train_data <- flood_climate_df_long[train_indices, ]
+#testing data is everything not in the training data
+test_data <- flood_climate_df_long[-train_indices, ]
+
+lr2 <- glm(flood ~ temperature + precipitation + elevation,
+               data = train_data, 
+               family = binomial)
+
+summary(lr2)
+
+test_data$predict <- predict(lr2, newdata = test_data, type = "response")
+
+#predict for a specific time
+target_string <- format(target_date, "%Y-%m-%d")
+
+vars <- c("temperature", "precipitation", "elevation")
+layer_names <- paste0(vars, "_", target_string)
+
+r_target <- flood_climate_rast[[layer_names]]
+
+df_target <- as.data.frame(r_target, xy = TRUE, na.rm = TRUE)
+names(df_target) <- c("x", "y", "temperature", "precipitation", "elevation")
+
+df_target$predict <- predict(lr2, newdata = df_target, type = "response")
+
+target_prob <- rast(df_target[, c("x", "y", "predict")], type = "xyz", crs = crs(r_target))
+
+df_plot <- as.data.frame(target_prob, xy = TRUE, na.rm = TRUE)
+names(df_plot) <- c("x", "y", "flood_prob")
+
+ggplot(df_plot, aes(x = x, y = y, fill = flood_prob)) +
+  geom_tile(colour = NA) +
+  scale_fill_viridis_c(name = "Flood Probability", direction = -1) +
+  labs(title = paste("Predicted Flood Probability on", target_string),
+       x = "Longitude", y = "Latitude") +
+  theme_minimal(base_size = 15)
+
+plot(target_prob, main = paste("Predicted Flood Probability on", target_string))
+
+```
+
+  b. Random Forest Using Ranger
+```{r, rf2}
+
+library(ranger)
+library(partykit)
+library(DiagrammeR)
+
+sapply(train_data, class)
+#ranger can't work with sf objects
+train_data <- train_data |> st_drop_geometry()
+test_data <- test_data |> st_drop_geometry()
+
+rf2 <- ranger(
+  formula = as.factor(flood) ~ temperature + precipitation + elevation,
+  data = train_data,
+  num.trees = 100,
+  mtry = 2, #number of variables to possibly split at in each node
+  importance = "impurity",#or "permutation" if you want fancier variable importance
+  probability = TRUE, 
+  seed = 123
+)
+
+predictions <- predict(rf2, data = test_data, type = "response")
+
+test_data$predicted_rf_prob <- predictions$predictions[, "1"]
+
+
+```
+
+
+  c. AUROC Scores and Overfitting
+```{r, validation}
+
+library(pROC)
+
+roc_lr <- roc(test_data$flood, test_data$predict)
+roc_rf <- roc(test_data$flood, test_data$predicted_rf_prob)
+
+auc_logit <- auc(roc_lr)
+auc_rf <- auc(roc_rf)
+
+print(auc_logit)
+print(auc_rf)
+
+plot(roc_lr, col = "blue", print.auc = TRUE, main = "ROC Curves")
+plot(roc_rf, col = "forestgreen", add = TRUE, print.auc = TRUE, print.auc.y = 0.4)
+legend("bottomright", legend = c("Logistic Regression", "Random Forest"),
+       col = c("blue", "forestgreen"), lwd = 2)
+
+
+```
+
+
+
+##4. Predicting for 2050 Layers
+
+  a. Load Up Your Climate Model Outputs.
+  Filter for 2050 subsets for later prediction use.
+
+```{r, nc2050}
+
+library(terra)
+library(ncdf4)
+library(lubridate)
+
+precip_output <- rast("~/Documents/SFU/NSERC/USRA 2/Data/NACORDEX Model/prec.rcp85.GFDL-ESM2M.RegCM4.mon.NAM-22i.raw.nc")
+temp_output <- rast("~/Documents/SFU/NSERC/USRA 2/Data/NACORDEX Model/temp.rcp85.GFDL-ESM2M.RegCM4.mon.NAM-22i.raw.nc")
+elev_output <- rast("~/Documents/SFU/NSERC/USRA 2/Data/NACORDEX Model/orog.hist.GFDL-ESM2M.RegCM4.fixed.NAM-22i.raw.nc")
+
+precip_output <- resample(precip_output, temp_output)
+elev_output <- resample(elev_output, temp_output)
+
+plot(temp_output[[1]], main ="Just Looking")
+
+time_temp <- time(temp_output)
+time_temp[1:12]
+
+dates <- as.Date(time_temp)
+
+sel_layers <- which(year(dates) %in% 2050)
+
+temp_subset <- temp_output[[sel_layers]]
+
+#do the same for precipitation
+
+time_precip <- time(precip_output)
+time_precip[1:12]
+
+dates <- as.Date(time_precip)
+
+sel_layers <- which(year(dates) %in% 2050)
+
+precip_subset <- precip_output[[sel_layers]]
+
+#combine temperature, precipitation with elevation
+#stack temperature and precipitation first, then elevation
+
+n <- nlyr(temp_subset)
+filled_2050 <- c(temp_subset, precip_subset)
+order_idx <- as.vector(rbind(1:n, (n+1):(2*n)))
+filled_2050 <- filled_2050[[order_idx]]
+
+#we just have 1 layer of elevation!
+names(elev_output)
+nlyr(elev_output)
+
+elev_repeated <- rep(elev_output, n)
+
+filled_2050_elev <- c(temp_subset, precip_subset, elev_repeated)
+
+order_idx <- as.vector(rbind(1:n, (n+1):(2*n), (2*n+1):(3*n)))
+filled_2050 <- filled_2050_elev[[order_idx]]
+
+#add urban (0/1)
+pred_points <- as.points(filled_2050)
+
+pred_points_sf <- st_as_sf(pred_points)
+
+pred_points_sf <- urban_yn(pred_points_sf)
+
+pred_points_vect <- vect(pred_points_sf)
+
+#use first layer as a template
+template_rast <- filled_2050[[1]]
+
+#only 1 layer in the below raster
+urban_rast <- rasterize(pred_points_vect, template_rast, field = "urban")
+
+#make sure that the raster corresponds to the dates
+
+start_date <- as.Date("2050-01-01")
+var_names <- c("temperature", "precipitation", "elevation")
+
+repeat_static_layers <- function(static_rast, n_months) {
+  rep(static_rast, n_months)
+}
+
+urban_rep <- repeat_static_layers(urban_rast, n)
+
+combine_predictors <- function(temp_subset, precip_subset, elev_repeated) {
+  c(temp_subset, precip_subset, elev_repeated)
+}
+
+flood_01_predictors <- combine_predictors(temp_subset, precip_subset, elev_repeated)
+
+interleave_monthly_layers <- function(all_layers, n_months) {
+  order_idx <- as.vector(rbind(
+    1:n_months, # temperature
+    (n_months + 1):(2 * n_months), # precipitation
+    (2 * n_months + 1):(3 * n_months)# elevation
+  ))
+  all_layers[[order_idx]]
+}
+
+flood_01_months <- interleave_monthly_layers(flood_01_predictors, n)
+
+assign_layer_names <- function(stacked_layers, start_date, var_names) {
+  n_months <- nlyr(stacked_layers) / length(var_names)
+  all_dates <- seq.Date(from = as.Date(start_date), by = "month", length.out = n_months)
+  
+  names(stacked_layers) <- paste0(
+    rep(format(all_dates, "%Y-%m-%d"), each = length(var_names)), "_",
+    rep(var_names, times = n_months)
+  )
+  stacked_layers
+}
+
+flood_01_stack <- assign_layer_names(flood_01_months, start_date, var_names)
+
+filter_by_date <- function(stacked_layers, future_date) {
+  date_str <- format(as.Date(future_date), "%Y-%m-%d")
+  stacked_layers[[grep(paste0("^", date_str, "_"), names(stacked_layers))]]
+}
+
+pred_2050_no_urban <- filter_by_date(flood_01_stack, future_date)
+
+names(pred_2050_no_urban) <- c("temperature", "precipitation", "elevation")
+
+
+
+```
+
+
+  b. Filter for 2025 Raster Layers.
+  For the year 2025, we can predict:
+  1) the probability of a flood occurring on each grid, 
+  2) the probability of having a flood of category x on each grid, conditional on the fact that there is already a flood in each grid, 
+  3) the amount of people that will die in each grid, conditional on the fact that there is already a flood in each grid, 
+  4) the amount of people displaced in each grid, conditional on the fact that there is already a flood in each grid.
+```{r, 2025}
+
+#2025 rasters is sourced from observational data.
+#as 2025 has not finished yet, the months of July, August, September, October, November and December will be sourced from 2024 raster layers.
+
+#attach 2024 - 2025
+fill_missing_2025_months <- function(flood_climate_rast, missing_months = 7:12) {
+  #extract dates from layer names
+  dates <- as.Date(gsub(".*(\\d{4}-\\d{2}-\\d{2}).*", "\\1", names(flood_climate_rast)))
+  
+  #layers from 2025 Jan-Jun (existing)
+  idx_2025_jan_jun <- which(format(dates, "%Y") == "2025" & as.numeric(format(dates, "%m")) %in% 1:6)
+  
+  #layers from 2024 Jul-Dec (to fill missing)
+  idx_2024_jul_dec <- which(format(dates, "%Y") == "2024" & as.numeric(format(dates, "%m")) %in% missing_months)
+  
+  #extract the two parts
+  part1 <- flood_climate_rast[[idx_2025_jan_jun]]
+  part2 <- flood_climate_rast[[idx_2024_jul_dec]]
+  
+  #rename 2024 Jul-Dec layers to 2025 Jul-Dec (just dates in names)
+  names(part2) <- gsub("2024", "2025", names(part2))
+  
+  #combine
+  combined <- c(part1, part2)
+  
+  # Re-order layers by date just in case
+  combined_dates <- as.Date(gsub(".*(\\d{4}-\\d{2}-\\d{2}).*", "\\1", names(combined)))
+  combined <- combined[[order(combined_dates)]]
+  
+  return(combined)
+}
+
+flood_2025_filled <- fill_missing_2025_months(flood_climate_rast)
+
+#remove flood layers
+remove_flood_layers <- function(rast_stack) {
+  flood_idx <- grep("flood", names(rast_stack), ignore.case = TRUE)
+  rast_no_flood <- rast_stack[[-flood_idx]]
+  return(rast_no_flood)
+}
+
+flood_no_flood <- remove_flood_layers(flood_2025_filled)
+
+#filter by target_date
+filter_by_date <- function(rast_stack, target_date) {
+  dates <- as.Date(gsub(".*(\\d{4}-\\d{2}-\\d{2}).*", "\\1", names(rast_stack)))
+  date_idx <- which(dates == as.Date(target_date))
+  return(rast_stack[[date_idx]])
+}
+
+pred_2025 <- filter_by_date(flood_no_flood, target_date)
+
+names(pred_2025) <- c("temperature", "precipitation", "elevation")
+
+```
+
+  c. Predicting Probability of a Flood Occurring in both 2025 and 2050.
+```{r, p1}
+
+#don't need urban here
+
+flood_01_2025 <- terra::predict(
+  pred_2025,
+  rf2,
+  type = "response",
+  probability = TRUE,
+  index = 2 #probability of class flood = 1
+)
+flood_01_2025_masked <- mask(flood_01_2025, na_shape2_v)
+plot(flood_01_2025_masked, main = "Check Again")
+
+flood_01_2050 <- terra::predict(
+  pred_2050_no_urban,
+  rf2,
+  type = "response",
+  probability = TRUE,
+  index = 2
+)
+
+crs(na_shape2_v) <- crs(flood_01_2050)
+flood_01_2050_crop <- crop(flood_01_2050, na_shape2_v)
+flood_01_2050_masked <- mask(flood_01_2050_crop, na_shape2_v)
+plot(flood_01_2050_masked, main = "Checking",
+     ylim = c(ymin(flood_01_2025_masked) - 5, ymax(flood_01_2025_masked) + 10)
+     )
+
+plot(pred_2050[[1]])
+plot(na_shape2_v, add = TRUE)
+
+```
+
+  d. Predicting Probability of Category X
+```{r, polr}
+
+names(pred_2025) <- c("temperature", "precipitation", "elev_idw")
+flood_cat_2025 <- terra::predict(pred_2025, polr1, type = "probs")
+names(flood_cat_2025) <- c("Cat 1", "Cat 2", "Cat 3")
+
+flood_cat_2025_masked <- mask(flood_cat_2025, na_shape2_v)
+plot(flood_cat_2025_masked[[1]], main = "Category 1 Flood Probability")
+
+names(pred_2050_no_urban) <- c("temperature", "precipitation", "elev_idw")
+flood_cat_2050 <- terra::predict(pred_2050_no_urban, polr1, type = "probs")
+names(flood_cat_2050) <- c("Cat 1", "Cat 2", "Cat 3")
+
+crs(na_shape2_v) <- crs(flood_cat_2050)
+flood_cat_2050_crop <- crop(flood_cat_2050, na_shape2_v)
+flood_cat_2050_masked <- mask(flood_cat_2050, na_shape2_v)
+plot(flood_cat_2050_masked[[1]], main = "Checking",
+     ylim = c(ymin(flood_cat_2050_masked) - 5, ymax(flood_cat_2050_masked) + 10)
+     )
+
+
+```
+
+  e. Predicting Death 
+```{r, death count}
+
+#2025
+#add urban 
+
+create_urban_raster <- function(template_raster, urban_yn_func) {
+  #convert raster cells to points
+  points <- as.points(template_raster)
+  points_sf <- st_as_sf(points)
+  
+  #add urban yes/no using your custom function
+  points_sf <- urban_yn_func(points_sf)
+  
+  #convert yes/no to 1/0 numeric
+  points_sf$urban <- ifelse(points_sf$urban == "yes", 1, 0)
+  
+  #convert back to SpatVector and rasterize
+  points_vect <- vect(points_sf)
+  urban_rast <- rasterize(points_vect, template_raster, field = "urban", fun = "first")
+  
+  return(urban_rast)
+}
+
+urban_2025 <- create_urban_raster(pred_2025, urban_yn)
+
+pred_2025_urban <- c(pred_2025, urban_2025)
+
+names(pred_2025_urban) <- c("temperature", "precipitation", "elev_idw", "urban")
+
+death_2025 <- terra::predict(
+  pred_2025_urban,
+  nb1,
+  type = "response"
+)
+
+#now our raster holds predicted means (lambda) of each grid
+#convert this raster into a count raster with integer numbers
+
+lambda_counts <- death_2025
+values(lambda_counts) <- rpois(
+  n = ncell(lambda_counts),
+  lambda = values(death_2025)
+)
+
+
+
+#2050
+
+urban_2050 <- create_urban_raster(pred_2050_no_urban[[1]], urban_yn)
+
+pred_2050_urban <- c(pred_2050_no_urban, urban_2050)
+
+names(pred_2050_urban) <- c("temperature", "precipitation", "elev_idw", "urban")
+
+death_2050 <- terra::predict(
+  pred_2050_urban,
+  nb1,
+  type = "response"
+)
+
+lambda_counts2 <- death_2050
+values(lambda_counts2) <- rpois(
+  n = ncell(lambda_counts2),
+  lambda = values(death_2050)
+)
+
+crs(na_shape2_v) <- crs(lambda_counts2)
+lambda_crop <- crop(lambda_counts2, na_shape2_v)
+lambda_masked <- mask(lambda_crop, na_shape2_v)
+plot(lambda_masked, main = "Checking",
+     ylim = c(ymin(lambda_masked) - 5, ymax(lambda_masked) + 10)
+     )
+
+
+```
+
+  f. Predicting Displaced
+```{r, displaced count}
+
+#2025
+
+displaced_2025 <- terra::predict(
+  pred_2025_urban,
+  nb2,
+  type = "response"
+)
+
+lambda_displaced_counts <- displaced_2025
+values(lambda_displaced_counts) <- rpois(
+  n = ncell(lambda_displaced_counts),
+  lambda = values(displaced_2025)
+)
+
+plot(lambda_displaced_counts, main = "Just Checking")
+
+#2050
+
+displaced_2050 <- terra::predict(
+  pred_2050_urban,
+  nb2,
+  type = "response"
+)
+
+lambda_displaced_counts <- displaced_2050
+values(lambda_displaced_counts) <- rpois(
+  n = ncell(lambda_displaced_counts),
+  lambda = values(displaced_2050)
+)
+
+crs(na_shape2_v) <- crs(lambda_displaced_counts)
+lambda_displaced_crop <- crop(lambda_displaced_counts, na_shape2_v)
+lambda_displaced_masked <- mask(lambda_displaced_crop, na_shape2_v)
+plot(lambda_displaced_masked, main = "Checking",
+     ylim = c(ymin(lambda_displaced_masked) - 5, ymax(lambda_displaced_masked) + 10)
+     )
+
+
+
+```
+
+
+##4. Finding Flood Risk Analogues
+
+  a. Analogue for flood susceptibility.
+```{r, flood 01 analogue}
+
+library(leaflet)
+
+target_area_2050 <- crop(flood_01_2050_masked, location_area)
+target_area_2050_value <- values(target_area_2050)
+
+difference_raster_1 <- abs(flood_01_2025_masked - target_area_2050_value)
+
+plot(difference_raster_1, main = "Present Flood Risk Difference from Target Location")
+
+analogue_1 <- which.min(values(difference_raster_1))
+analogue1_coords <- terra::xyFromCell(difference_raster_1, analogue_1) #xyFromCell gets the center of each raster cell
+
+colnames(analogue1_coords) <- c("lng", "lat")
+print(analogue1_coords)
+
+
+
+leaflet() |>
+  addProviderTiles("CartoDB.Positron") |> #add a third party base map for me to work with
+  addMarkers(lng = location_coords["lng"], lat = location_coords["lat"],
+             label = "Target City",
+             popup = "Flood Risk of Your Target Month"
+  ) |>
+  addMarkers(lng = analogue1_coords[,"lng"], lat = analogue1_coords[,"lat"],
+             label = "Risk Analogue Location",
+             popup = "Flood Risk of Your Future Month"
+  ) |>
+  addPolylines(lng = c(location_coords["lng"], analogue1_coords[,"lng"]),
+               lat = c(location_coords["lat"], analogue1_coords[,"lat"]),
+               color = "orange", weight = 2)
+
+
+```
+
+
+  b. Analogue for the probability of getting a flood of category 3, given that there is already a flood.
+```{r, cat analogue}
+
+library(leaflet)
+
+target_cat_2050 <- crop(flood_cat_2050_masked[[3]], location_area)
+target_cat_2050_value <- values(target_cat_2050)
+
+difference_raster_2 <- abs(flood_cat_2025_masked[[3]] - target_cat_2050_value)
+
+plot(difference_raster_2, main = "Present Flood Category Risk Difference from Target Location")
+
+analogue_2 <- which.min(values(difference_raster_2))
+analogue2_coords <- terra::xyFromCell(difference_raster_2, analogue_2) #xyFromCell gets the center of each raster cell
+
+colnames(analogue2_coords) <- c("lng", "lat")
+print(analogue2_coords)
+
+leaflet() |>
+  addProviderTiles("CartoDB.Positron") |> #add a third party base map for me to work with
+  addMarkers(lng = location_coords["lng"], lat = location_coords["lat"],
+             label = "Target City",
+             popup = "Flood Risk of Your Target Month"
+  ) |>
+  addMarkers(lng = analogue2_coords[,"lng"], lat = analogue2_coords[,"lat"],
+             label = "Risk Analogue Location",
+             popup = "Flood Risk of Your Future Month"
+  ) |>
+  addPolylines(lng = c(location_coords["lng"], analogue2_coords[,"lng"]),
+               lat = c(location_coords["lat"], analogue2_coords[,"lat"]),
+               color = "orange", weight = 2)
+
+
+```
+
+  c. Death and Displaced Amounts?
+```{r, death and displaced}
+
+target_death_2050 <- crop(death_2050, location_area)
+target_death_2050_value <- values(target_death_2050)
+
+target_death_2050_count <- rpois(n=1, lambda = target_death_2050_value)
+print(target_death_2050_count)
+
+```
+
